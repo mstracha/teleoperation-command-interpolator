@@ -9,9 +9,9 @@ permissions:
 
 jobs:
   windows-msvc:
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure
         run: cmake -S . -B out/build/ci -A x64 -DBUILD_TESTING=ON
       - name: Build
@@ -26,9 +26,9 @@ jobs:
         run: cmake --build out/build/consumer --config Release --parallel
 
   ubuntu-gcc:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure
         run: cmake -S . -B out/build/ci -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - name: Build
