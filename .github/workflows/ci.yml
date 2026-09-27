@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-msvc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B out/build/ci -A x64 -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build out/build/ci --config Release --parallel
+      - name: Test
+        run: ctest --test-dir out/build/ci -C Release --output-on-failure
+      - name: Install
+        run: cmake --install out/build/ci --config Release --prefix "${{ github.workspace }}/out/install"
+      - name: Configure consumer
+        run: cmake -S examples/consumer -B out/build/consumer -A x64 -DCMAKE_PREFIX_PATH="${{ github.workspace }}/out/install"
+      - name: Build consumer
+        run: cmake --build out/build/consumer --config Release --parallel
+
+  ubuntu-gcc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B out/build/ci -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build out/build/ci --parallel
+      - name: Test
+        run: ctest --test-dir out/build/ci --output-on-failure
+      - name: Install
+        run: cmake --install out/build/ci --prefix "${{ github.workspace }}/out/install"
+      - name: Configure consumer
+        run: cmake -S examples/consumer -B out/build/consumer -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${{ github.workspace }}/out/install"
+      - name: Build consumer
+        run: cmake --build out/build/consumer --parallel

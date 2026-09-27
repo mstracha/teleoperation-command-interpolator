@@ -1,0 +1,32 @@
+sequenceDiagram
+  autonumber
+  participant P as Producer thread
+  participant T as CommandInterpolator
+  participant Q as CommandRingBuffer
+  participant IT as Input telemetry buffer
+  participant C as Controller thread
+
+  P->>T: submitCommand(command, receive_time)
+  T->>T: Validate finite positions and joint ranges
+  T->>T: Reject duplicate, out-of-order, or too-small sender interval
+  alt excessive sender gap
+    T->>T: Latch pending fault metadata
+    T->>IT: Record RejectedSenderGap
+    T-->>P: RejectedSenderGap
+    Note over C,T: Producer never mutates controller-owned state
+  else invalid command
+    T->>IT: Record rejection and original timestamps
+    T-->>P: rejection result
+  else valid command
+    T->>Q: tryPush(command)
+    alt ring full
+      Q-->>T: false
+      T->>IT: Record RejectedBufferFull
+      T-->>P: RejectedBufferFull
+    else accepted
+      Q-->>T: true
+      T->>T: Publish newest accepted sender and receive times
+      T->>IT: Record Accepted
+      T-->>P: Accepted
+    end
+  end

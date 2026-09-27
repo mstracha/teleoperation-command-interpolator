@@ -1,0 +1,33 @@
+flowchart LR
+  operator([Robot integrator or operator])
+  sender([Command producer])
+  controller([Nominal 500 Hz controller])
+  logger([Telemetry consumer])
+  testeng([Test engineer or agent])
+
+  subgraph system["Teleoperation Command Interpolator"]
+    ingest([Validate and enqueue commands])
+    trajectory([Produce safe six-joint targets])
+    monitor([Monitor timing and trajectory limits])
+    fault([Latch faults and coordinate shutdown])
+    telemetry([Capture deterministic telemetry])
+    simulate([Run deterministic virtual-time scenarios])
+    stress([Run real three-thread scenarios])
+    report([Write immutable CSV run report])
+  end
+
+  sender --> ingest
+  controller --> trajectory
+  ingest --> monitor
+  trajectory --> monitor
+  monitor --> fault
+  ingest --> telemetry
+  trajectory --> telemetry
+  fault --> telemetry
+  logger --> telemetry
+  testeng --> simulate
+  testeng --> stress
+  simulate --> report
+  stress --> report
+  report --> testeng
+  operator --> fault

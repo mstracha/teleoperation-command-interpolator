@@ -1,0 +1,10 @@
+stateDiagram-v2
+  [*] --> Buffering
+  Buffering --> Running : valid 4-command window
+  Buffering --> Faulted : startup safety failure
+  Running --> Holding : temporary underrun
+  Running --> Faulted : terminal safety failure
+  Holding --> Running : valid successor
+  Holding --> Faulted : watchdog or validation failure
+  Faulted --> Faulted
+  Faulted --> [*] : shutdown after telemetry drain

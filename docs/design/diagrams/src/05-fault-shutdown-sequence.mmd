@@ -1,0 +1,30 @@
+sequenceDiagram
+  autonumber
+  participant N as Network producer
+  participant C as Controller producer
+  participant T as CommandInterpolator
+  participant S as ShutdownCoordinator
+  participant L as Logger
+
+  C->>T: controller update
+  T->>T: Detect terminal safety condition
+  T-->>C: Faulted and latched FaultReason
+  C->>S: requestStop(fault_reason)
+  S->>S: Atomically latch first non-None fault
+  S->>S: Phase = StopRequested
+  par stop network producer
+    N->>S: observes stopRequested()
+    N->>S: markNetworkStopped()
+  and stop controller producer
+    C->>S: markControllerStopped()
+  and continue telemetry drain
+    L->>T: drain input/control telemetry
+  end
+  L->>S: beginLogDrain()
+  S-->>L: true only after both producers stopped
+  loop until both telemetry queues empty
+    L->>T: drain telemetry batches
+  end
+  L->>S: markLoggingComplete()
+  S->>S: Phase = Complete
+  Note over S,L: Preserve telemetry before exit

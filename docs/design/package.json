@@ -1,0 +1,16 @@
+{
+  "name": "teleoperation-command-interpolator-design-docs",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "diagrams": "node tools/render-diagrams.mjs",
+    "html": "node tools/build-docs.mjs",
+    "pdf": "node tools/export-pdf.mjs"
+  },
+  "devDependencies": {
+    "@mermaid-js/mermaid-cli": "^11.12.0",
+    "marked": "^16.4.1",
+    "puppeteer": "^25.3.0"
+  }
+}

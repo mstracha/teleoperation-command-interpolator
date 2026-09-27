@@ -1,0 +1,34 @@
+classDiagram
+direction TB
+class CommandRingBuffer {
+  <<template Capacity, LookbackWindow>>
+  -storage_ array of TargetCommand
+  -write_position_ atomic size_t
+  -read_head_position_ atomic size_t
+  +tryPush(command) bool
+  +hasInterpolationWindow() bool
+  +tryGetInterpolationSet(output) bool
+  +tryAdvanceInterpolationSet() bool
+}
+class TelemetryRingBuffer {
+  <<template Sample, Capacity>>
+  -storage_ array of Sample
+  -write_position_ atomic size_t
+  -read_position_ atomic size_t
+  -dropped_sample_count_ atomic size_t
+  +tryPush(sample) bool
+  +tryPopBatch(output) size_t
+  +available() size_t
+  +droppedSampleCount() size_t
+}
+class TargetCommand {
+  +sender_time SenderTime
+  +received_time ControllerTime
+  +positions double[6]
+}
+class InputTelemetrySample
+class ControlTelemetrySample
+
+CommandRingBuffer *-- TargetCommand
+TelemetryRingBuffer ..> InputTelemetrySample
+TelemetryRingBuffer ..> ControlTelemetrySample

@@ -1,0 +1,36 @@
+classDiagram
+direction TB
+
+class CommandRingBuffer {
+  <<SPSC template>>
+}
+class TelemetryRingBuffer {
+  <<SPSC template>>
+}
+class InterpolatorStateMachine
+class ShutdownCoordinator
+class CommandDerivativeEstimator {
+  <<stateless>>
+}
+class QuinticSegment
+class QuinticValidator {
+  <<stateless>>
+}
+class JointTrajectorySegment
+class CommandInterpolator
+class VirtualTimeHarness
+class RealTimeHarness
+class RunReportWriter
+
+CommandInterpolator *-- InterpolatorStateMachine
+CommandInterpolator *-- CommandRingBuffer
+CommandInterpolator *-- JointTrajectorySegment
+CommandInterpolator *-- TelemetryRingBuffer : input and control
+CommandInterpolator ..> CommandDerivativeEstimator
+JointTrajectorySegment *-- "6" QuinticSegment
+JointTrajectorySegment ..> QuinticValidator
+VirtualTimeHarness *-- CommandInterpolator
+VirtualTimeHarness *-- ShutdownCoordinator
+RealTimeHarness *-- CommandInterpolator
+RealTimeHarness *-- ShutdownCoordinator
+RunReportWriter ..> RealTimeHarness : serializes result

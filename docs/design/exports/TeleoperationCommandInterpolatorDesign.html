@@ -1,0 +1,766 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teleoperation Command Interpolator - Design Record</title>
+<style>
+  :root { --ink:#17212b; --muted:#536270; --blue:#345b78; --deep:#173f5b; --pale:#eaf1f8; --rule:#c8d2da; --warn:#b04444; }
+  * { box-sizing:border-box; }
+  html { background:#edf1f4; }
+  body { max-width:1040px; margin:24px auto; padding:54px 70px; background:#fff; color:var(--ink); font:16px/1.55 Arial, Helvetica, sans-serif; box-shadow:0 2px 18px #0002; }
+  .cover { min-height:88vh; display:flex; flex-direction:column; justify-content:center; }
+  .cover h1 { font-size:2.55rem; }
+  h1 { color:var(--deep); font-size:2.35rem; line-height:1.1; margin:0 0 .55rem; border-bottom:4px solid var(--blue); padding-bottom:.5rem; }
+  h2 { color:var(--deep); font-size:1.65rem; line-height:1.2; margin:2.5rem 0 .8rem; border-bottom:1px solid var(--rule); padding-bottom:.25rem; break-after:avoid-page; page-break-after:avoid; }
+  h3 { color:#28546f; font-size:1.25rem; margin:1.8rem 0 .55rem; break-after:avoid-page; page-break-after:avoid; }
+  h4 { font-size:1.05rem; margin:1.25rem 0 .35rem; break-after:avoid-page; page-break-after:avoid; }
+  h2 + *, h3 + *, h4 + * { break-before:avoid-page; page-break-before:avoid; }
+  .keep-together { break-inside:avoid-page; page-break-inside:avoid; }
+  p, li { orphans:3; widows:3; }
+  blockquote { margin:1.1rem 0; padding:.8rem 1rem; border-left:5px solid var(--warn); background:#fff4f2; color:#4a2525; }
+  blockquote strong:first-child { color:#7d2929; }
+  code { font-family:Consolas, "Courier New", monospace; background:#f1f4f6; padding:.08rem .25rem; border-radius:3px; }
+  pre { background:#17212b; color:#f4f7fa; padding:1rem; overflow:auto; border-radius:5px; break-inside:avoid; font-size:.86rem; }
+  pre code { background:transparent; color:inherit; padding:0; }
+  table { width:100%; border-collapse:collapse; margin:1rem 0 1.4rem; font-size:.91rem; break-inside:avoid; }
+  th { background:var(--pale); color:var(--deep); text-align:left; }
+  th, td { border:1px solid #aebbc5; padding:.45rem .55rem; vertical-align:top; }
+  tr { break-inside:avoid; }
+  img { display:block; max-width:100%; max-height:840px; width:auto; height:auto; margin:1rem auto 1.5rem; break-inside:avoid; }
+  hr { border:0; border-top:1px solid var(--rule); margin:2rem 0; }
+  a { color:#255c80; }
+  .contents { margin:2rem 0; padding:1.1rem 1.4rem; background:#f5f8fa; border:1px solid var(--rule); border-radius:6px; }
+  .contents h2 { margin:0 0 .6rem; border:0; font-size:1.2rem; }
+  .contents ul { columns:2; column-gap:2rem; margin:.4rem 0; padding-left:1.4rem; font-size:.9rem; }
+  .contents li { break-inside:avoid; margin:.2rem 0; }
+  .page-break { break-before:page; }
+  @media print {
+    @page { size:A4; margin:14mm 15mm 16mm; }
+    html, body { background:#fff; }
+    body { max-width:none; margin:0; padding:0; box-shadow:none; font-size:9.2pt; line-height:1.38; }
+    .cover { min-height:250mm; break-after:page; }
+    .cover h1 { font-size:25pt; }
+    h1 { font-size:23pt; }
+    h2 { font-size:15.5pt; margin-top:1.55rem; }
+    h3 { font-size:12pt; margin-top:1.15rem; }
+    h4 { font-size:10.2pt; }
+    table { font-size:7.8pt; }
+    pre { font-size:7.5pt; white-space:pre-wrap; overflow-wrap:anywhere; }
+    img { max-height:238mm; }
+    .contents { break-after:page; }
+    .page-break { break-before:page; }
+    a { color:inherit; text-decoration:none; }
+  }
+</style>
+</head>
+<body>
+<section class="cover"><h1>Teleoperation Command Interpolator</h1>
+<p><strong>Design, safety rationale, verification record, and adversarial-testing handoff</strong></p>
+<p>Author and maintainer: Mark Strachan<br>
+Version 1.0 - September 2026<br>
+Status: publication candidate; ten test executables passing at the verified source baseline<br>
+Verified source baseline: public <code>v1.0.0</code> release candidate, tested September 26, 2026</p>
+<blockquote>
+<p><strong>Safety boundary:</strong> This is a software design and test artifact, not a certified robot controller. The included joint limits are fictional. No hardware plant, drive, emergency-stop circuit, safety PLC, fieldbus, operating-system real-time guarantee, or formal safety case has been validated.</p>
+</blockquote>
+</section>
+<aside class="contents"><h2>Contents</h2><ul><li>Executive introduction</li>
+<li>1. Whole-system class diagram</li>
+<li>2. Use cases</li>
+<li>3. Runtime sequences</li>
+<li>4. Architectural decisions and reasoning</li>
+<li>5. Detailed class catalog</li>
+<li>6. Data model and result taxonomy</li>
+<li>7. Configuration and toy defaults</li>
+<li>8. Verification record</li>
+<li>9. Language and library elements</li>
+<li>10. Behavioral scenarios</li>
+<li>11. Failure hypotheses for adversarial testing</li>
+<li>12. LangGraph and DSPy adversarial-testing handoff</li>
+<li>13. Improvement loop</li>
+<li>14. Readiness assessment</li>
+<li>15. Build and verification commands</li>
+<li>16. Document maintenance</li></ul></aside>
+<h2>Executive introduction</h2>
+<p>The Teleoperation Command Interpolator is an independent educational C++17 system for studying how a lower-frequency, jittery command stream can feed a bounded target-update path on a nominal 500 Hz schedule. A producer supplies six-joint <code>TargetCommand</code> values at approximately 15–30 Hz. A fixed-capacity SPSC command buffer preserves ordered transfer without blocking the controller, while a four-command lookahead window provides the neighboring samples needed to estimate segment-boundary velocity and acceleration.</p>
+<p>The controller maps its monotonic clock onto the sender timeline once enough commands are buffered. It then builds a six-joint trajectory as one transaction: derivative estimation defines shared boundary states, six quintic segments are constructed, and the complete interval is checked for position, velocity, acceleration, and jerk limits before any target is published. The state machine makes buffering, running, temporary holding, and terminal fault behavior explicit.</p>
+<p>Two fixed-layout telemetry streams preserve input and controller evidence without adding formatting work to either producer. Deterministic virtual time supports exact replay; a three-thread harness exercises process-local scheduling, telemetry drain, and orderly shutdown. Together, the source, ten behavioral suites, diagrams, and immutable reporting path provide a concrete system for code review, numerical testing, and future adversarial-testing research.</p>
+<p>The sections that follow move from the whole-system structure and runtime interactions to the decisions behind them, then catalogue each class, its verification evidence, and the failure hypotheses reserved for later investigation.</p>
+<h2>1. Whole-system class diagram</h2>
+<p><img src="../diagrams/rendered/01-system-class-diagram.svg" alt="Whole-system class diagram"></p>
+<p>The design separates five operational concerns:</p>
+<ol>
+<li>bounded single-producer/single-consumer transfer;</li>
+<li>command validation, state ownership, and time-domain mapping;</li>
+<li>derivative estimation and continuously validated trajectory construction;</li>
+<li>deterministic and real-thread execution harnesses;</li>
+<li>loss-accounted telemetry, orderly shutdown, and immutable reporting.</li>
+</ol>
+<p>The central rule is that the nominal 500 Hz controller thread owns controller state. A network-like producer may validate and enqueue a command, publish atomic observations, and latch a pending fault, but it does not directly transition the controller state machine.</p>
+<h2>2. Use cases</h2>
+<p><img src="../diagrams/rendered/02-use-case-diagram.svg" alt="System use cases"></p>
+<h3>2.1 Primary actors</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Goal</th>
+<th>Interface</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Command producer</td>
+<td>Submit time-ordered six-joint targets without blocking the controller</td>
+<td><code>submitCommand</code></td>
+</tr>
+<tr>
+<td>Nominal 500 Hz controller</td>
+<td>Obtain the next validated target with deterministic bounded work</td>
+<td><code>updateTarget</code></td>
+</tr>
+<tr>
+<td>Telemetry consumer</td>
+<td>Drain input and control evidence without blocking either producer</td>
+<td>telemetry drain methods</td>
+</tr>
+<tr>
+<td>Test engineer or test agent</td>
+<td>Execute reproducible scenarios, inject timing and value faults, and compare outcomes</td>
+<td>virtual-time and real-time harnesses</td>
+</tr>
+<tr>
+<td>Robot integrator or operator</td>
+<td>Supply real limits and define the external safe-stop action</td>
+<td>configuration boundary outside this toy project</td>
+</tr>
+</tbody></table>
+<h3>2.2 Intended outcomes</h3>
+<ul>
+<li>Reject malformed, duplicate, stale, too-fast, or unbufferable commands at ingress.</li>
+<li>Preserve the sender&#39;s intended time flow without subtracting unrelated clock epochs.</li>
+<li>Produce position-, velocity-, and acceleration-continuous six-joint target segments while checking jerk limits over each complete segment.</li>
+<li>Reject an entire six-joint trajectory transaction if any joint violates a continuous limit.</li>
+<li>Hold the last valid target during a temporary underrun.</li>
+<li>Make faults terminal for a controller session.</li>
+<li>Stop command and controller producers while allowing telemetry to drain completely.</li>
+<li>Produce stable, machine-readable evidence for later LangGraph and DSPy analysis.</li>
+</ul>
+<h2>3. Runtime sequences</h2>
+<h3>3.1 Command ingress</h3>
+<p><img src="../diagrams/rendered/03-command-ingress-sequence.svg" alt="Command ingress sequence"></p>
+<p>Ingress deliberately performs inexpensive checks before touching the command buffer. A command is accepted only if all six positions are finite and within the configured position limits, its sender timestamp is strictly newer than the last accepted timestamp, its interval is not below the configured minimum, and the bounded ring has capacity.</p>
+<p>An excessive sender interval is different from an ordinary invalid sample. It suggests the sender&#39;s intended trajectory has a discontinuity too large to bridge safely. The producer rejects the command and atomically publishes a pending fault. The controller consumes that pending fault and performs the state transition on its next update. This preserves single-thread state ownership.</p>
+<h3>3.2 Controller update and trajectory construction</h3>
+<p><img src="../diagrams/rendered/04-control-loop-sequence.svg" alt="Controller-loop sequence"></p>
+<p>The interpolation window contains four sender commands. The middle two commands define the active segment; the preceding and succeeding commands provide the local context needed to estimate boundary velocity and acceleration. Estimating both shared boundaries from the same samples gives adjacent segments identical position, velocity, and acceleration at their join.</p>
+<p>Trajectory construction is transactional. All six scalar quintics are built and continuously validated before the new <code>JointTrajectorySegment</code> becomes active. A failed joint cannot leave five newly configured joints combined with one old joint.</p>
+<h3>3.3 Fault and shutdown lifecycle</h3>
+<p><img src="../diagrams/rendered/05-fault-shutdown-sequence.svg" alt="Fault and shutdown sequence"></p>
+<p><code>Faulted</code> is terminal for the current controller session. Terminal does not mean &quot;terminate immediately and lose evidence.&quot; The <code>ShutdownCoordinator</code> first requests producer shutdown, waits until the network and controller producers report stopped, allows the logger to drain both queues, and only then enters <code>Complete</code>.</p>
+<h3>3.4 State machine</h3>
+<p><img src="../diagrams/rendered/10-state-machine.svg" alt="Interpolator state machine"></p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Meaning</th>
+<th>Output policy</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Buffering</code></td>
+<td>Fewer than four usable commands, or no valid trajectory yet</td>
+<td>No new target is claimed</td>
+</tr>
+<tr>
+<td><code>Running</code></td>
+<td>A validated trajectory is active</td>
+<td>Publish evaluated target</td>
+</tr>
+<tr>
+<td><code>Holding</code></td>
+<td>Temporary receive silence or no successor</td>
+<td>Preserve the last valid target</td>
+</tr>
+<tr>
+<td><code>Faulted</code></td>
+<td>Terminal safety or consistency failure</td>
+<td>Publish no new target; retain fault evidence</td>
+</tr>
+</tbody></table>
+<p>No transition returns to <code>Buffering</code> after execution begins. Recovery from <code>Faulted</code> requires a new controller session and explicit external reset policy; the class intentionally has no implicit reset.</p>
+<h2>4. Architectural decisions and reasoning</h2>
+<h3>4.1 Use bounded SPSC rings for deterministic transfer</h3>
+<p>The command and telemetry paths use fixed-capacity arrays with monotonically increasing logical counters and modulo physical indexing. Their work is bounded, no element shifting is required, and no allocator or mutex participates in the frequency-sensitive update path.</p>
+<p>The command path has exactly one producer and one consumer. That makes a general multi-producer queue unnecessary. Release stores publish completed slot writes; matching acquire loads make those writes visible to the other thread. <code>memory_order_acquire</code> is not a lock and does not wait for another thread to &quot;release&quot; an atomic variable. It constrains visibility and ordering of the ordinary storage writes associated with the published index.</p>
+<p>The logical counters are unsigned. Their subtraction remains valid across unsigned wrap while the live distance remains less than half the counter range, which is overwhelmingly true for a small bounded ring. Requiring power-of-two capacity keeps physical indexing behavior regular and makes the wrap assumption explicit.</p>
+<h3>4.2 Retain a four-command lookahead window</h3>
+<p>Two positions are sufficient to interpolate position but insufficient to infer smooth boundary derivatives. Four positions provide one sample on each side of the active pair. The ring retains the lookback portion of the window when advancing, so the consumer can construct adjacent segments without mutable references into producer-owned storage.</p>
+<p>The consumer copies the small window into local storage. This is intentional. Returning references to ring slots would allow the producer eventually to overwrite data while the controller was still using it. A bounded copy of four fixed-size commands is simpler and safer than extending slot lifetimes or adding locks.</p>
+<h3>4.3 Distinguish sender time from controller time</h3>
+<p><code>SenderTime</code> and <code>ControllerTime</code> are distinct types. Their epochs need not agree. The system never interprets <code>controller_time - sender_time</code> as network latency.</p>
+<p>When the first valid interpolation window becomes available, the controller maps a controller-time origin onto a sender-time origin. Subsequent elapsed controller time is applied to the sender timeline. This retains the sender&#39;s intended spacing without injecting receive jitter into every target timestamp.</p>
+<p><code>received</code> time remains important for the watchdog and telemetry. It can measure receiver-side silence and, when clock synchronization is known externally, can support latency, jitter, and drift analysis. The class itself makes no synchronization claim.</p>
+<h3>4.4 Reject unsafe input; do not silently clamp it</h3>
+<p>Silently clamping a target would convert an invalid command into a plausible-looking command and conceal a contract violation. Ingress therefore rejects non-finite or out-of-range positions. Continuous trajectory validation separately catches overshoot or excessive derivatives that are invisible at the command endpoints.</p>
+<p>The fictional <code>DefaultToyJointLimits</code> exist only to make tests executable. A real integration must provide joint-specific units, topology, soft and hard position ranges, asymmetric velocity and acceleration limits where appropriate, jerk limits, and a policy for continuous revolute joints.</p>
+<h3>4.5 Use quintics and validate the whole interval</h3>
+<p>A fifth-degree polynomial can satisfy position, velocity, and acceleration at both endpoints. Its first and second derivatives are continuous across adjacent segments when shared boundary states match; jerk is finite but not necessarily continuous between independently constructed segments.</p>
+<p>Endpoint checks alone are insufficient. A quintic can overshoot position limits or reach maximum velocity, acceleration, or jerk inside the segment. <code>QuinticValidator</code> finds relevant polynomial extrema on the normalized interval, maps them to physical time, and checks the complete interval.</p>
+<p>The root search uses fixed-size arrays, degree-bounded recursion through derivative roots, and a bounded number of bisection iterations. There is no heap allocation or unbounded convergence loop in validation.</p>
+<h3>4.6 Make six-joint configuration transactional</h3>
+<p><code>JointTrajectorySegment::configure</code> creates and validates candidate scalar segments first. Only after every joint succeeds does the object commit the new configuration. This provides an all-or-nothing invariant:</p>
+<blockquote>
+<p>A configured <code>JointTrajectorySegment</code> is a coherent six-joint trajectory whose complete interval has passed the configured position, velocity, acceleration, and jerk limits.</p>
+</blockquote>
+<h3>4.7 Separate input and control telemetry</h3>
+<p>Input events are produced by the network-like thread; control events are produced by the controller thread. Each stream therefore has its own SPSC telemetry buffer. Merging them into one ring would create two producers and invalidate the SPSC proof.</p>
+<p>Telemetry records are fixed-layout, trivially copyable structs. They record outcomes and failure details without formatting text in the real-time path. Dropped sample counts are explicit. CSV conversion is deferred to the report writer.</p>
+<h3>4.8 Allocate large telemetry buffers at construction, not during updates</h3>
+<p>The telemetry buffers are held by <code>std::unique_ptr</code>. This incurs controlled allocation during object construction while keeping the interpolator object and typical caller stack frames smaller. No allocation occurs in command ingestion or controller evaluation.</p>
+<h3>4.9 Provide deterministic and real-thread harnesses</h3>
+<p>The virtual-time harness is the primary correctness oracle. It uses one event loop, explicit timestamps, no sleeping, and exact tick counting. A failure can be replayed exactly.</p>
+<p>The real-time harness answers a different question: whether the design behaves coherently with three process-local threads, scheduler jitter, interruptible waits, and coordinated log drain. The wait policy is selectable so the portable condition-variable path can be compared directly with the Windows high-resolution waitable timer. A caller may also request controller-thread affinity to one logical processor on Windows; the result records whether that request was applied, unsupported, invalid, or failed.</p>
+<p>Every executed controller tick retains its scheduled offset, actual start offset, nonnegative lateness, and <code>updateTarget</code> duration. The result derives nearest-rank p50, p95, and p99 lateness values and preserves the maximum. The standalone <code>timing_qualification</code> tool repeats identical one-second trials, rotates configuration order to reduce systematic first-run bias, and emits comparison-ready CSV for portable, automatic, and optionally pinned configurations. These facilities measure scheduler behavior; they do not prove a hard real-time deadline or alter thread priority.</p>
+<h3>4.10 Make reports immutable and schema-stable</h3>
+<p><code>RunReportWriter</code> writes to a sibling staging directory and atomically renames the completed directory. It refuses to overwrite an existing report. Partial output cannot masquerade as a completed run, and prior failure evidence is preserved.</p>
+<p>The CSV schema uses stable enum names and explicit empty fields for absent failure indices. Non-finite values in deliberately malformed test data have consistent textual representations.</p>
+<h2>5. Detailed class catalog</h2>
+<h3>5.1 Buffer and record types</h3>
+<p><img src="../diagrams/rendered/06-buffer-class-details.svg" alt="Buffer class details"></p>
+<h4><code>CommandRingBuffer&lt;Capacity, LookbackWindow&gt;</code></h4>
+<p><strong>Responsibility:</strong> Transfer ordered <code>TargetCommand</code> values from one producer to one consumer while retaining a fixed interpolation window.</p>
+<p><strong>Important members:</strong> fixed <code>storage_</code>; producer-owned atomic <code>write_position_</code>; consumer-owned atomic <code>read_head_position_</code> initialized to <code>LookbackWindow - 1</code>.</p>
+<p><strong>Methods:</strong></p>
+<ul>
+<li><code>tryPush</code> copies one complete command into the next slot and release-publishes the write counter.</li>
+<li><code>hasInterpolationWindow</code> reports whether the requested lookback is available.</li>
+<li><code>tryGetInterpolationSet</code> copies the stable window into caller-owned fixed storage.</li>
+<li><code>tryAdvanceInterpolationSet</code> advances only when a successor will remain available.</li>
+</ul>
+<p><strong>Invariants:</strong> one producer, one consumer; capacity greater than lookback; lookback between two and five; power-of-two capacity; lock-free index atomics on the target platform.</p>
+<h4><code>TelemetryRingBuffer&lt;Sample, Capacity&gt;</code></h4>
+<p><strong>Responsibility:</strong> Transfer one telemetry stream from its producer to a high-throughput logger.</p>
+<p><strong>Important members:</strong> fixed storage; atomic producer and consumer counters; atomic dropped-sample count.</p>
+<p><strong>Methods:</strong> <code>tryPush</code>, batch-oriented <code>tryPopBatch</code>, <code>available</code>, and <code>droppedSampleCount</code>.</p>
+<p><strong>Design note:</strong> Full telemetry is dropped and counted rather than blocking a real-time producer. The buffer does not claim cross-process shared-memory semantics.</p>
+<h3>5.2 Trajectory subsystem</h3>
+<p><img src="../diagrams/rendered/07-trajectory-class-details.svg" alt="Trajectory class details"></p>
+<h4><code>CommandDerivativeEstimator</code></h4>
+<p><strong>Responsibility:</strong> Convert four time-ordered position commands into start and end position/velocity/acceleration boundary states for the middle interval.</p>
+<p><strong>Method:</strong> static <code>estimate</code> validates timestamps and positions, computes nonuniform quadratic three-point derivatives, and returns a detailed status including failed command and joint.</p>
+<p><strong>Why stateless:</strong> Every output depends only on the supplied window. Statelessness improves replay, test isolation, and future parallel scenario execution.</p>
+<h4><code>QuinticSegment</code></h4>
+<p><strong>Responsibility:</strong> Configure and evaluate one scalar fifth-degree polynomial.</p>
+<p><strong>Members:</strong> six coefficients, duration, configured flag.</p>
+<p><strong>Methods:</strong> <code>configure</code>, <code>evaluate</code>, <code>isConfigured</code>, <code>durationSeconds</code>.</p>
+<p><strong>Failure hygiene:</strong> A failed reconfiguration clears validity, so old coefficients cannot accidentally remain usable. Evaluation rejects non-finite or out-of-interval time.</p>
+<h4><code>QuinticValidator</code></h4>
+<p><strong>Responsibility:</strong> Prove, within its numerical algorithm and tolerances, that one configured scalar quintic stays inside position, velocity, acceleration, and jerk limits over its complete closed interval.</p>
+<p><strong>Method:</strong> static <code>validate</code> returns category, extremum time, and extremum value.</p>
+<p><strong>Numerical approach:</strong> Normalize polynomial coefficients, recursively isolate roots using derivative roots, merge nearly duplicate roots, bisect with a fixed 80-iteration bound, and evaluate endpoints plus internal extrema.</p>
+<h4><code>JointTrajectorySegment</code></h4>
+<p><strong>Responsibility:</strong> Configure, validate, and evaluate six scalar trajectories as one atomic unit.</p>
+<p><strong>Members:</strong> six joint limits, six <code>QuinticSegment</code> objects, duration, configured flag.</p>
+<p><strong>Methods:</strong> <code>configure</code>, <code>evaluate</code>, state accessors, and private limit/boundary validation.</p>
+<p><strong>Error localization:</strong> Status reports identify the joint, time, and value associated with a rejected boundary, continuous-limit violation, or evaluation failure.</p>
+<h3>5.3 Control and lifecycle subsystem</h3>
+<p><img src="../diagrams/rendered/08-control-class-details.svg" alt="Control class details"></p>
+<section class="keep-together"><h4><code>InterpolatorStateMachine</code></h4>
+<p><strong>Responsibility:</strong> Enforce the allowed lifecycle and reject accidental transitions.</p>
+<p><strong>Member:</strong> current <code>InterpolatorState</code> initialized to <code>Buffering</code>.</p>
+<p><strong>Methods:</strong> <code>state</code>, <code>transitionTo</code>, and private <code>isAllowed</code>.</p>
+<p><strong>Policy:</strong> Self-transition is idempotent. <code>Faulted</code> accepts only itself. There is deliberately no reset method.</p>
+</section>
+<h4><code>ShutdownCoordinator</code></h4>
+<p><strong>Responsibility:</strong> Coordinate an orderly multi-thread stop while preserving terminal telemetry.</p>
+<p><strong>Members:</strong> atomic shutdown phase, first fault reason, and producer-stopped flags.</p>
+<p><strong>Methods:</strong> request normal or fault stop, query state, mark producers stopped, begin log drain, and mark logging complete.</p>
+<p><strong>Policy:</strong> The first non-<code>None</code> fault wins. Logging cannot complete before draining begins, and draining cannot begin until both telemetry producers are stopped.</p>
+<h4><code>CommandInterpolator</code></h4>
+<p><strong>Responsibility:</strong> Own the command contract, controller state, clock mapping, watchdog, interpolation window, active trajectory, target publication, and two telemetry streams.</p>
+<p><strong>Principal members:</strong> state machine; 16-slot four-command ring; 256-sample input telemetry ring; 4096-sample control telemetry ring; four-command local window; last target; sender/controller origins; active six-joint trajectory; limits and timing configuration; pending and latched fault metadata.</p>
+<p><strong>Public methods:</strong> <code>submitCommand(TargetCommand)</code>, <code>submitCommand(TargetCommand, ControllerTime)</code>, <code>updateTarget(ControllerTime, JointPositions&amp;)</code>, state/fault inspection, telemetry drains, and telemetry counts.</p>
+<p><strong>Private flow:</strong> validate and accept command; calculate next result; configure or evaluate active trajectory; record fixed telemetry; enter terminal fault; publish target only after successful evaluation.</p>
+<p><strong>Concurrency contract:</strong> exactly one thread calls ingress, exactly one thread calls controller update, and exactly one logger consumes each respective telemetry ring. Object destruction occurs only after all users have stopped.</p>
+<h3>5.4 Harness and reporting subsystem</h3>
+<p><img src="../diagrams/rendered/09-harness-class-details.svg" alt="Harness and report class details"></p>
+<h4><code>VirtualTimeHarness</code></h4>
+<p><strong>Responsibility:</strong> Execute scheduled deliveries and controller ticks in deterministic virtual time.</p>
+<p><strong>Method:</strong> <code>run</code> validates scenario ranges/order/budget, processes events in a fixed order, drains telemetry, coordinates shutdown, and returns full evidence.</p>
+<h4><code>RealTimeHarness</code></h4>
+<p><strong>Responsibility:</strong> Exercise network, nominal 500 Hz controller, and logger roles on three actual process-local threads.</p>
+<p><strong>Method:</strong> <code>run</code> validates periods and schedule, applies startup delay, selects and records the requested and actual wait strategies, optionally applies Windows controller-thread affinity, captures one timing sample per executed tick, derives lateness percentiles, and returns drained telemetry plus aggregate metrics.</p>
+<section class="keep-together"><h4><code>RunReportWriter</code></h4>
+<p><strong>Responsibility:</strong> Serialize a <code>RealTimeRunResult</code> into a complete, non-overwriting, versioned report directory.</p>
+<p><strong>Method:</strong> <code>write</code> produces <code>summary.csv</code>, <code>input_telemetry.csv</code>, <code>control_telemetry.csv</code>, and <code>controller_timing.csv</code> through temporary files and a staging directory, then atomically finalizes the directory.</p>
+</section>
+<h2>6. Data model and result taxonomy</h2>
+<h3>6.1 Clock-domain types</h3>
+<ul>
+<li><code>SenderTime</code>: signed 64-bit nanoseconds in the sender&#39;s unspecified epoch.</li>
+<li><code>ControllerTime</code>: signed 64-bit nanoseconds in the receiver/controller clock domain; <code>now()</code> uses <code>std::chrono::steady_clock</code>.</li>
+<li><code>TargetCommand</code>: sender dispatch time, controller receive time, and six positions.</li>
+</ul>
+<p>Signed 64-bit nanoseconds make comparisons explicit and avoid floating-point loss for large epochs. Durations are converted to <code>double</code> seconds only at the numerical trajectory boundary.</p>
+<h3>6.2 Ingress results</h3>
+<p><code>CommandResult</code> distinguishes acceptance from non-finite positions, out-of-range positions, duplicate or out-of-order sender time, too-small interval, excessive sender gap, and full command buffer. Distinct results are essential for telemetry classification and adversarial test scoring.</p>
+<h3>6.3 Controller results</h3>
+<p><code>ControlResult</code> is one of <code>Buffering</code>, <code>TargetProduced</code>, <code>Holding</code>, or <code>Faulted</code>. The result is not interchangeable with state: every control call also records whether a target was actually produced.</p>
+<h3>6.4 Fault reasons</h3>
+<p>Faults include excessive sender gap; receive timeout; controller clock regression; command-buffer inconsistency; invalid segment timing; illegal state transition; missing hold target; excessive advancement; derivative-estimation failure; trajectory configuration or evaluation failure; and continuous position, velocity, acceleration, or jerk limit violations.</p>
+<p>The taxonomy intentionally separates root causes that may lead to the same <code>Faulted</code> state. Automated test agents should optimize for discovering distinct fault mechanisms, not merely maximizing the number of faulted runs.</p>
+<h3>6.5 Telemetry records</h3>
+<p><code>InputTelemetrySample</code> records both time domains, six positions, and ingress result. <code>ControlTelemetrySample</code> records controller time, target positions, segment timing, result/state/fault, failed command/joint indices, failure time/value, and an explicit <code>has_target</code> bit. Sentinel constants are used only inside the fixed record; CSV output uses empty fields when failure details are absent.</p>
+<h2>7. Configuration and toy defaults</h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th align="right">Toy default</th>
+<th>Intended policy</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Minimum sender interval</td>
+<td align="right">10 ms</td>
+<td>Reject implausibly dense or duplicate-like commands</td>
+</tr>
+<tr>
+<td>Maximum sender interval</td>
+<td align="right">100 ms</td>
+<td>Reject and fault rather than bridge a large intended-time discontinuity</td>
+</tr>
+<tr>
+<td>Hold timeout</td>
+<td align="right">150 ms</td>
+<td>Preserve the last valid target during brief receive silence</td>
+</tr>
+<tr>
+<td>Fault timeout</td>
+<td align="right">500 ms</td>
+<td>Enter terminal <code>Faulted</code> after prolonged receive silence</td>
+</tr>
+<tr>
+<td>Command buffer capacity</td>
+<td align="right">16 commands</td>
+<td>Bounded lookahead without excessive latency</td>
+</tr>
+<tr>
+<td>Lookahead window</td>
+<td align="right">4 commands</td>
+<td>Estimate both boundaries of the middle segment</td>
+</tr>
+<tr>
+<td>Input telemetry capacity</td>
+<td align="right">256 samples</td>
+<td>Absorb ingress bursts for the process-local logger</td>
+</tr>
+<tr>
+<td>Control telemetry capacity</td>
+<td align="right">4096 samples</td>
+<td>Cover a longer nominal 500 Hz logging interval</td>
+</tr>
+</tbody></table>
+<p>All durations must be positive and the fault timeout must exceed the hold timeout. Scenario-specific values can be injected through <code>InterpolatorConfiguration</code>.</p>
+<h2>8. Verification record</h2>
+<p>At the verified source baseline, a clean CMake Release build produced ten test executables and CTest reported ten of ten passing. The tests are ordinary deterministic C++ executables with explicit assertions and nonzero failure exit codes.</p>
+<table>
+<thead>
+<tr>
+<th>Verification field</th>
+<th>Recorded value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Date</td>
+<td>September 26, 2026</td>
+</tr>
+<tr>
+<td>Source baseline</td>
+<td>Public <code>v1.0.0</code> release candidate</td>
+</tr>
+<tr>
+<td>Compiler</td>
+<td>Microsoft C/C++ 19.50.35720.0, x64</td>
+</tr>
+<tr>
+<td>Visual Studio toolset</td>
+<td>Visual Studio 2026 18.1; MSVC 14.50.35717</td>
+</tr>
+<tr>
+<td>Windows SDK</td>
+<td>10.0.26100.0</td>
+</tr>
+<tr>
+<td>Generator</td>
+<td>Visual Studio 18 2026, x64</td>
+</tr>
+<tr>
+<td>Configuration</td>
+<td>Release, C++17, <code>/W4 /permissive-</code></td>
+</tr>
+<tr>
+<td>Result</td>
+<td>10/10 CTest suites passed</td>
+</tr>
+</tbody></table>
+<p>The checked-in <code>msvc-release</code> preset configured the Visual Studio generator, built the Release configuration, and ran the complete CTest suite. The timing-qualification executable was then built and exercised in portable, automatic high-resolution, and affinity-pinned modes.</p>
+<h3>8.1 <code>InterpolatorStateMachineTests</code></h3>
+<p>Tests initial <code>Buffering</code>; valid <code>Buffering -&gt; Running</code>, <code>Running -&gt; Holding</code>, <code>Holding -&gt; Running</code>, and transitions to <code>Faulted</code>; rejection of skipped or backward transitions; idempotent self-transitions; and terminal <code>Faulted</code> behavior.</p>
+<p><strong>Why:</strong> A safety policy expressed as scattered conditionals is difficult to audit. The transition table is small enough to test exhaustively.</p>
+<h3>8.2 <code>ShutdownCoordinatorTests</code></h3>
+<p>Tests normal and fault stop requests; first-fault latching; producer-stop observation; prohibition on log completion before drain; waiting for both producers; pre-stopped producer ordering; and terminal <code>Complete</code> for normal and fault lifecycles.</p>
+<p><strong>Why:</strong> Immediate process exit can discard the exact telemetry needed to explain a fault. Shutdown ordering is therefore a correctness property.</p>
+<h3>8.3 <code>QuinticSegmentTests</code></h3>
+<p>Tests canonical smooth-step values at start, midpoint, and end; arbitrary boundary reproduction; continuity between joined segments; duration retention; rejection of zero, negative, infinite, or numerically unsafe duration; non-finite boundaries and evaluation time; interval bounds; unconfigured evaluation; failed-reconfiguration invalidation; and valid recovery.</p>
+<p><strong>Why:</strong> The scalar polynomial is the numerical foundation. Exact known values detect coefficient, derivative, time-scaling, and Horner-evaluation errors.</p>
+<h3>8.4 <code>CommandDerivativeEstimatorTests</code></h3>
+<p>Tests uniform and nonuniform timestamp windows; exact start/end positions; quadratic derivative velocity and acceleration; identical shared boundaries between sliding windows; duplicate timestamps; non-finite positions; non-finite estimates; and precise failure command/joint localization.</p>
+<p><strong>Why:</strong> Lookahead only improves smoothness if adjacent estimates agree. Nonuniform sampling is necessary because sender intervals are bounded but not assumed constant.</p>
+<h3>8.5 <code>QuinticValidatorTests</code></h3>
+<p>Tests a safe complete interval; interior position overshoot; interior velocity maximum; interior acceleration maximum; interior jerk minimum; physical time/value reporting; normalized-time operation for short segments; degenerate constant polynomials; invalid limits; and unconfigured segments.</p>
+<p><strong>Why:</strong> Endpoint-only tests miss the most important spline failure mode: an unsafe internal extremum between two individually valid commands.</p>
+<h3>8.6 <code>JointTrajectorySegmentTests</code></h3>
+<p>Tests six-joint configuration and evaluation; midpoint position/velocity/acceleration/jerk; boundary reproduction; invalid duration; non-finite and unordered limits; non-finite and out-of-range boundary state; continuous position, velocity, acceleration, and jerk violations; failed-joint/time/value localization; whole-trajectory transactional rejection; and evaluation failure.</p>
+<p><strong>Why:</strong> Scalar correctness does not prove coherent six-axis behavior. Transactional rejection prevents mixed old/new trajectory state.</p>
+<h3>8.7 <code>CommandInterpolatorTests</code></h3>
+<p>Tests startup buffering; transition to target production; sender/controller epoch independence; interior interpolation; duplicate, out-of-order, too-small, excessive-gap, non-finite, infinite, out-of-range, and buffer-full ingress; recovery interval measured from the last accepted command; holding and resume; exact receive watchdog thresholds; controller clock regression; pending producer fault consumed by controller; unsafe derivative trajectory fault before publication; unchanged caller output on fault; failure metadata; one telemetry event per input/control call; telemetry drain; and concurrent receive ordering without an invented clock fault.</p>
+<p><strong>Why:</strong> This suite verifies the integration contract and thread-ownership decisions, including negative guarantees such as &quot;do not modify output&quot; and &quot;producer does not transition state.&quot;</p>
+<h3>8.8 <code>VirtualTimeHarnessTests</code></h3>
+<p>Tests healthy jittered completion; exact 500 Hz inclusive tick count; deterministic target at a selected tick; exact timeout at 500 ms; complete telemetry capture and zero drops; faulted shutdown with final fault record drained; invalid ranges, nonpositive period, out-of-order schedule, and tick-budget exhaustion.</p>
+<p><strong>Why:</strong> Virtual time makes boundary behavior reproducible and fast enough for large adversarial scenario populations.</p>
+<h3>8.9 <code>RealTimeHarnessTests</code></h3>
+<p>Tests a one-second healthy three-thread run at a nominal 500 Hz; the expected platform wait strategy; explicit portable-wait selection; unsupported or invalid affinity reporting; bounded scheduler-slot accounting; one timing sample per executed tick; ordered p50/p95/p99/maximum lateness; delivery count; sustained controller ticks; interpolated targets; captured input/control events; zero drops; configured periods and duration; measured controller lateness and call time; a reported observed controller rate; invalid controller period; unsafe trajectory fault; fault reason preservation; final terminal telemetry; and complete log-draining shutdown.</p>
+<p><strong>Why:</strong> Deterministic simulation cannot expose all mistakes in stop coordination, wait interruption, scheduler behavior, or SPSC ownership.</p>
+<h3>8.10 <code>RunReportWriterTests</code></h3>
+<p>Tests empty-path rejection; existence of all four CSV files; temporary-file finalization; staging-directory atomic finalization; configuration and aggregate fields; stable wait and affinity names; per-tick scheduling evidence; timestamp and double precision; consistent non-finite test representation; absent failure fields; terminal failure details; and refusal to overwrite an existing report.</p>
+<p><strong>Why:</strong> Adversarial testing is only useful if evidence is complete, stable, and not silently replaced.</p>
+<h2>9. Language and library elements</h2>
+<table>
+<thead>
+<tr>
+<th>Element</th>
+<th>Use</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>std::array</code></td>
+<td>commands, joints, coefficients, ring storage, roots</td>
+<td>Fixed size, contiguous storage, no per-update allocation</td>
+</tr>
+<tr>
+<td><code>std::atomic</code></td>
+<td>ring counters, fault publication, shutdown flags</td>
+<td>Lock-free cross-thread publication under explicit ownership</td>
+</tr>
+<tr>
+<td>acquire/release ordering</td>
+<td>SPSC index handoff</td>
+<td>Publish ordinary slot writes without a mutex</td>
+</tr>
+<tr>
+<td>relaxed ordering</td>
+<td>same-thread-owned counters and independent observations</td>
+<td>Avoid unnecessary ordering while preserving atomicity</td>
+</tr>
+<tr>
+<td><code>static_assert</code></td>
+<td>capacities, power-of-two layout, trivial records, lock-free atomics</td>
+<td>Turn platform/design assumptions into compile-time failures</td>
+</tr>
+<tr>
+<td><code>enum class</code></td>
+<td>results, states, faults, phases</td>
+<td>Scoped, non-convertible categories suitable for stable reports</td>
+</tr>
+<tr>
+<td><code>std::chrono::steady_clock</code></td>
+<td>controller time</td>
+<td>Monotonic receiver time unaffected by wall-clock adjustments</td>
+</tr>
+<tr>
+<td>strong wrapper structs</td>
+<td>sender and controller timestamps</td>
+<td>Prevent accidental subtraction of unrelated epochs</td>
+</tr>
+<tr>
+<td><code>noexcept</code></td>
+<td>bounded numerical and state operations</td>
+<td>Makes failure channels explicit and avoids exception unwinding in update paths</td>
+</tr>
+<tr>
+<td><code>std::unique_ptr</code></td>
+<td>large telemetry rings</td>
+<td>Allocate once during construction; reduce stack/object footprint</td>
+</tr>
+<tr>
+<td>templates</td>
+<td>ring capacity/sample type</td>
+<td>Compile-time layout and reuse without virtual dispatch</td>
+</tr>
+<tr>
+<td>Horner evaluation</td>
+<td>quintic and derivative values</td>
+<td>Fixed, efficient polynomial evaluation</td>
+</tr>
+<tr>
+<td><code>std::filesystem</code></td>
+<td>report staging/finalization</td>
+<td>Portable path construction and atomic same-volume rename</td>
+</tr>
+<tr>
+<td><code>std::thread</code>, Windows waitable timers, and condition variables</td>
+<td>real harness</td>
+<td>Exercise ownership and interruptible shutdown without busy spinning</td>
+</tr>
+</tbody></table>
+<h2>10. Behavioral scenarios</h2>
+<h3>10.1 Planned and implemented</h3>
+<ul>
+<li>Clean startup with a four-command interpolation window.</li>
+<li>Moderate delivery jitter with ordered sender timestamps.</li>
+<li>Commands arriving faster than the configured minimum.</li>
+<li>Duplicate and out-of-order sender timestamps.</li>
+<li>Unrelated sender and controller clock epochs.</li>
+<li>Temporary buffer underrun followed by recovery.</li>
+<li>Prolonged receive silence leading to a terminal fault.</li>
+<li>Large intended sender-time gap that must not be bridged.</li>
+<li>Endpoint-valid commands whose inferred trajectory violates derivative limits.</li>
+<li>Internal spline overshoot not visible at the endpoints.</li>
+<li>Full command ring and full telemetry ring behavior.</li>
+<li>Controller clock regression.</li>
+<li>Normal and fault-driven three-thread shutdown with log drain.</li>
+<li>Deterministic replay and immutable CSV evidence.</li>
+</ul>
+<h3>10.2 Considered but not implemented</h3>
+<ul>
+<li>Hardware feedback, Kalman-filter state, following error, torque, temperature, and drive status.</li>
+<li>A safety-rated emergency-stop output and independent safety controller.</li>
+<li>Clock synchronization protocols or a declared maximum clock error.</li>
+<li>Continuous-angle topology and shortest-path unwrapping for revolute joints.</li>
+<li>Network transport, DDS, ROS 2 executors, shared memory, or gRPC.</li>
+<li>Cross-process ring buffers and crash-recovery semantics.</li>
+<li>Real-time operating-system scheduling, thread-priority policy, priority inversion analysis, process isolation, cross-platform topology-aware affinity, and memory locking.</li>
+<li>Dynamic retiming when a segment cannot satisfy limits at the requested duration.</li>
+<li>Jerk continuity across segments or higher-order snap constraints.</li>
+<li>Redundant sensor plausibility and plant-model validation.</li>
+<li>Authentication, authorization, replay protection, and adversarial network security.</li>
+</ul>
+<h2>11. Failure hypotheses for adversarial testing</h2>
+<p>The following are hypotheses, not confirmed defects. They form the first high-value test backlog.</p>
+<h3>11.1 Numerical hypotheses</h3>
+<ol>
+<li>Extremely short but accepted intervals may magnify derivatives enough to stress floating-point conditioning before ordinary limit rejection.</li>
+<li>Near-multiple polynomial roots may challenge root merging or sign classification and cause a missed narrow extremum.</li>
+<li>Very large absolute positions combined with very small motion may lose significant digits in coefficient construction.</li>
+<li>Values exactly on a limit, within one or several units in the last place, may produce platform-dependent pass/fail behavior.</li>
+<li>Signed timestamp arithmetic near <code>int64_t</code> limits may overflow before conversion if not guarded at every subtraction.</li>
+<li>Unsigned ring-counter wrap is mathematically intended, but it has not been accelerated with a reduced-width counter test specialization.</li>
+</ol>
+<h3>11.2 Concurrency hypotheses</h3>
+<ol>
+<li>The SPSC design fails if a second ingress producer, controller consumer, or logger consumer is introduced accidentally.</li>
+<li>Object destruction concurrent with any thread remains outside the ownership contract.</li>
+<li>Rare producer/controller interleavings around pending fault publication and newest receive time may expose inconsistent failure metadata even if the state remains safe.</li>
+<li>Telemetry capacity can be exhausted if the logger is delayed longer than the assumed interval; drop counting works, but the terminal record itself could be among dropped samples.</li>
+<li>Windows scheduling stalls may make the real harness miss timing goals. Per-tick evidence now exposes those stalls, but the project intentionally has no universal pass/fail deadline threshold.</li>
+</ol>
+<h3>11.3 State and policy hypotheses</h3>
+<ol>
+<li>Holding the last target is not universally safe; gravity-loaded or unstable robots may require a drive-specific controlled stop.</li>
+<li>A valid successor after holding may create a large error relative to actual hardware state even though the target-space trajectory is internally smooth.</li>
+<li>Rejecting the first excessive-gap command and faulting on the next controller tick leaves a small interval where the producer knows more than the controller.</li>
+<li>Buffer fullness currently rejects new information. Some systems may prefer dropping the oldest not-yet-active future command, but that changes safety and determinism.</li>
+<li>Fixed global timing thresholds may be inappropriate for commands with explicitly variable intended rates.</li>
+</ol>
+<h3>11.4 Integration hypotheses</h3>
+<ol>
+<li>Unit mismatch between degrees and radians, or seconds and nanoseconds, can defeat otherwise correct limits.</li>
+<li>A transport may deserialize missing or repeated protobuf fields into plausible defaults that ingress accepts.</li>
+<li>ROS 2 callback/executor configuration may violate the assumed one-producer ownership.</li>
+<li>Logger process separation requires an explicit transport and backpressure contract; the current ring cannot simply be placed in another process.</li>
+<li>Hardware controllers may impose tighter velocity/acceleration/jerk constraints or their own interpolation, producing double interpolation.</li>
+</ol>
+<h2>12. LangGraph and DSPy adversarial-testing handoff</h2>
+<h3>12.1 Objective</h3>
+<p>Build an intelligent test system that searches for distinct, reproducible violations of declared properties. The agents should not edit production code during discovery. Every candidate failure must first be reduced to a deterministic virtual-time scenario and then, where relevant, replayed in the real-thread harness.</p>
+<h3>12.2 Inputs available to agents</h3>
+<ul>
+<li>This document and Mermaid design sources.</li>
+<li>C++ headers and implementations.</li>
+<li>Ten executable test suites.</li>
+<li>Scenario configuration structures.</li>
+<li>Input and control telemetry records.</li>
+<li>Immutable CSV report schema.</li>
+<li>CMake/CTest build and verification commands.</li>
+</ul>
+<h3>12.3 Candidate agent roles</h3>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Responsibility</th>
+<th>Output</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Property extractor</td>
+<td>Convert design claims and invariants into executable predicates</td>
+<td>versioned property catalog</td>
+</tr>
+<tr>
+<td>Scenario generator</td>
+<td>Produce command positions, timestamps, receive schedules, limits, and timing configuration</td>
+<td>deterministic scenario seed</td>
+</tr>
+<tr>
+<td>Numerical adversary</td>
+<td>Target conditioning, extrema, limit boundaries, and timestamp ranges</td>
+<td>minimized numerical counterexample</td>
+</tr>
+<tr>
+<td>Concurrency adversary</td>
+<td>Vary scheduling pressure, logger delay, and stop timing</td>
+<td>replay recipe and race evidence</td>
+</tr>
+<tr>
+<td>Oracle critic</td>
+<td>Challenge whether a test&#39;s expected outcome actually follows from the specification</td>
+<td>accepted/rejected oracle rationale</td>
+</tr>
+<tr>
+<td>Reducer</td>
+<td>Minimize failing commands, joints, duration, and event count</td>
+<td>smallest deterministic reproducer</td>
+</tr>
+<tr>
+<td>Coverage analyst</td>
+<td>Track properties, result categories, state transitions, and fault reasons reached</td>
+<td>coverage matrix</td>
+</tr>
+<tr>
+<td>Human-review broker</td>
+<td>Bundle only high-value decisions and runnable evidence</td>
+<td>concise review packet</td>
+</tr>
+</tbody></table>
+<h3>12.4 DSPy optimization targets</h3>
+<p>DSPy should optimize structured modules rather than free-form &quot;find bugs&quot; prompts. Useful metrics include:</p>
+<ul>
+<li>percentage of generated scenarios that parse and execute;</li>
+<li>unique fault mechanisms discovered;</li>
+<li>confirmed invariant violations rather than expected rejections;</li>
+<li>deterministic reproduction rate;</li>
+<li>minimization quality;</li>
+<li>false-positive rate under oracle review;</li>
+<li>new branch/state/fault coverage per CPU-hour;</li>
+<li>human minutes required per confirmed issue.</li>
+</ul>
+<p>Training examples should include both true defects and valid safety rejections. Otherwise the optimizer may learn that simply provoking <code>Faulted</code> is success.</p>
+<h3>12.5 LangGraph workflow</h3>
+<ol>
+<li>Load the design contract, source revision, property catalog, and prior findings.</li>
+<li>Select an uncovered property or failure hypothesis.</li>
+<li>Generate a bounded batch of virtual-time scenarios with recorded random seeds.</li>
+<li>Build once, then execute scenarios in isolated worker directories.</li>
+<li>Parse telemetry and apply deterministic predicates.</li>
+<li>Route apparent violations to an independent oracle critic.</li>
+<li>Minimize accepted violations while preserving exact reproduction.</li>
+<li>Replay timing-sensitive cases in the real-thread harness many times.</li>
+<li>Cluster failures by mechanism and discard duplicates.</li>
+<li>Produce a human packet containing the claim, smallest input, expected versus actual behavior, relevant telemetry slice, one-command reproduction, and recommended priority.</li>
+<li>After human acceptance, create a regression test before proposing a fix.</li>
+<li>Re-run the complete suite and compare the quality score to the prior revision.</li>
+</ol>
+<h3>12.6 Safety properties to encode first</h3>
+<ul>
+<li>No output position, velocity, acceleration, or jerk exceeds configured limits for a published trajectory sample.</li>
+<li>No target is claimed when the controller result is <code>Buffering</code> or terminal <code>Faulted</code>.</li>
+<li>Caller output remains unchanged on a trajectory-configuration fault.</li>
+<li>Accepted sender timestamps are strictly increasing and respect the minimum interval.</li>
+<li>The network producer never changes <code>InterpolatorState</code> directly.</li>
+<li><code>FaultReason</code> is stable after the first terminal fault.</li>
+<li><code>Faulted</code> never transitions to a non-fault state in the same session.</li>
+<li>The report cannot reach <code>ShutdownPhase::Complete</code> before both producers stop and telemetry drains.</li>
+<li>Adjacent successfully estimated segments have identical shared position, velocity, and acceleration.</li>
+<li>A rejected six-joint configuration leaves no partially committed trajectory.</li>
+<li>Every ingress and controller invocation produces exactly one corresponding telemetry event unless a documented telemetry drop occurs.</li>
+<li>Report writer failure or preexisting output never modifies the existing report.</li>
+</ul>
+<h3>12.7 Human review packet</h3>
+<p>Each notification should answer, in one screen where possible:</p>
+<ol>
+<li>What design claim may be false?</li>
+<li>Is the run deterministic?</li>
+<li>What is the smallest reproducer?</li>
+<li>Could the behavior damage hardware, lose evidence, or merely reduce quality?</li>
+<li>What decision is required from the human?</li>
+<li>What happens if the decision is deferred?</li>
+</ol>
+<p>Routine expected rejections should remain in dashboards and not notify the human. Only new mechanisms, disputed specification questions, possible hardware hazards, and high-confidence regressions should interrupt.</p>
+<section class="keep-together"><h2>13. Improvement loop</h2>
+<p>The project can be evolved as a scored sequence:</p>
+<ol>
+<li>Freeze a source revision and report schema.</li>
+<li>Run the deterministic and threaded baseline suites.</li>
+<li>Run the adversarial batch under fixed CPU/time budgets.</li>
+<li>Accept only independently reproduced findings.</li>
+<li>Add regression tests before implementation changes.</li>
+<li>Make one narrowly scoped design change.</li>
+<li>Rebuild and run all prior tests plus the adversarial corpus.</li>
+<li>Compare safety-property coverage, distinct findings, timing metrics, telemetry loss, and human review burden.</li>
+<li>Keep the revision only if it improves the declared score without invalidating an intentional contract.</li>
+</ol>
+<p>This protects against agents &quot;improving&quot; the score by weakening limits, suppressing faults, deleting difficult tests, or redefining expected outcomes.</p>
+</section>
+<h2>14. Readiness assessment</h2>
+<h3>Suitable now</h3>
+<ul>
+<li>C++ teaching and code-review exercise.</li>
+<li>Deterministic exploration of timestamp, interpolation, and state-machine behavior.</li>
+<li>Parallel virtual-time adversarial testing.</li>
+<li>Telemetry-schema and reporting experiments.</li>
+<li>Evaluation of LangGraph/DSPy testing workflows.</li>
+</ul>
+<h3>Requires further engineering before hardware use</h3>
+<ul>
+<li>Real robot and drive specifications.</li>
+<li>Explicit units and joint topology.</li>
+<li>Hardware-state feedback and following-error policy.</li>
+<li>Independent safe-stop integration.</li>
+<li>Real-time OS and scheduling analysis.</li>
+<li>Transport and serialization contract.</li>
+<li>Fault-tree analysis, hazard analysis, and requirements traceability.</li>
+<li>Static analysis, sanitizers, concurrency instrumentation, coverage, and platform matrix.</li>
+<li>Long-duration soak, counter-wrap acceleration, and power-loss recovery tests.</li>
+<li>Review by qualified robotics controls and functional-safety engineers.</li>
+</ul>
+<h2>15. Build and verification commands</h2>
+<p>From the repository root on the documented Windows/MSVC environment:</p>
+<pre><code class="language-powershell">cmake --preset msvc-release
+cmake --build --preset msvc-release
+ctest --preset msvc-release
+</code></pre>
+<p>The expected baseline is ten passing tests. The installed-package example under <code>examples/consumer</code> also verifies that a separate consumer can resolve the package and link through <code>teleoperation::command_interpolator</code>. Future documentation should record the source commit, compiler, platform, configuration, and exact test count rather than treating this historical result as automatically current.</p>
+<div class="page-break"></div>
+
+<h2>16. Document maintenance</h2>
+<ul>
+<li>Edit <code>TeleoperationCommandInterpolatorDesign.md</code> and the Mermaid files under <code>diagrams/src</code>.</li>
+<li>Regenerate every rendered SVG after diagram-source changes.</li>
+<li>Regenerate HTML and PDF after canonical Markdown changes.</li>
+<li>Visually inspect every PDF page for clipping, unreadable diagrams, orphaned headings, and stale references.</li>
+<li>Update test traceability when a test is added, removed, or changes intent.</li>
+<li>Bump the report schema version only for a deliberate machine-readable compatibility change.</li>
+<li>Treat this document as context for agents, not as authority to weaken production safety policy.</li>
+</ul>
+<hr>
+<p><strong>Canonical source:</strong> <code>docs/design/TeleoperationCommandInterpolatorDesign.md</code><br>
+<strong>Diagram source:</strong> <code>docs/design/diagrams/src/*.mmd</code><br>
+<strong>Generated editions:</strong> <code>docs/design/exports/TeleoperationCommandInterpolatorDesign.html</code> and <code>.pdf</code></p>
+
+</body>
+</html>

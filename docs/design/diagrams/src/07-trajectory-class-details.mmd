@@ -1,0 +1,42 @@
+classDiagram
+direction LR
+class CommandDerivativeEstimator {
+  <<stateless>>
+  +CommandCount = 4
+  +JointCount = 6
+  +estimate(commands,output) Status
+}
+class QuinticSegment {
+  -coefficients_ double[6]
+  -duration_seconds_ double
+  -configured_ bool
+  +configure(start,end,duration) Status
+  +evaluate(time,output) Status
+  +isConfigured() bool
+  +durationSeconds() double
+}
+class QuinticValidator {
+  <<stateless>>
+  +validate(segment,limits) Status
+}
+class JointTrajectorySegment {
+  -limits_ JointLimits
+  -segments_ QuinticSegment[6]
+  -duration_seconds_ double
+  -configured_ bool
+  +configure(start,end,duration) Status
+  +evaluate(time,output) Status
+  +isConfigured() bool
+  +durationSeconds() double
+  -validateJointLimits() Status
+  -validateBoundary(boundary) Status
+}
+class EstimatedJointTrajectorySegment {
+  +start JointTrajectoryBoundary
+  +end JointTrajectoryBoundary
+  +duration_seconds double
+}
+
+CommandDerivativeEstimator ..> EstimatedJointTrajectorySegment
+JointTrajectorySegment *-- "6" QuinticSegment
+JointTrajectorySegment ..> QuinticValidator

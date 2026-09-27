@@ -1,0 +1,36 @@
+classDiagram
+direction LR
+class VirtualTimeHarness {
+  -joint_limits_ JointLimits
+  -configuration_ InterpolatorConfiguration
+  +VirtualTimeHarness(limits,configuration)
+  +run(scenario) VirtualTimeRunResult
+}
+class RealTimeHarness {
+  -joint_limits_ JointLimits
+  -configuration_ InterpolatorConfiguration
+  +RealTimeHarness(limits,configuration)
+  +run(scenario) RealTimeRunResult
+}
+class RunReportWriter {
+  +SchemaVersion = 3
+  +write(run,report_directory) ReportWriteResult
+}
+class VirtualTimeScenario
+class VirtualTimeRunResult
+class RealTimeScenario {
+  +controller_wait_preference
+  +controller_logical_processor
+}
+class RealTimeRunResult {
+  +controller_wait_strategy
+  +controller_affinity_result
+  +controller_timing
+  +p50/p95/p99 lateness
+}
+
+VirtualTimeHarness ..> VirtualTimeScenario
+VirtualTimeHarness ..> VirtualTimeRunResult
+RealTimeHarness ..> RealTimeScenario
+RealTimeHarness ..> RealTimeRunResult
+RunReportWriter ..> RealTimeRunResult

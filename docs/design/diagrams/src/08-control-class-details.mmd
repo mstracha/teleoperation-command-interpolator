@@ -1,0 +1,49 @@
+classDiagram
+direction TB
+class InterpolatorStateMachine {
+  -state_ InterpolatorState
+  +state() InterpolatorState
+  +transitionTo(next_state) StateTransitionResult
+  -isAllowed(from,to) bool
+}
+class ShutdownCoordinator {
+  -phase_ atomic ShutdownPhase
+  -fault_reason_ atomic FaultReason
+  -controller_stopped_ atomic bool
+  -network_stopped_ atomic bool
+  +requestStop()
+  +requestStop(reason)
+  +stopRequested() bool
+  +phase() ShutdownPhase
+  +faultReason() FaultReason
+  +markControllerStopped()
+  +markNetworkStopped()
+  +producersStopped() bool
+  +beginLogDrain() bool
+  +markLoggingComplete() bool
+}
+class CommandInterpolator {
+  <<teleoperation>>
+  -state_machine_ InterpolatorStateMachine
+  -command_queue_ CommandRingBuffer
+  -input_telemetry_ TelemetryRingBuffer
+  -control_telemetry_ TelemetryRingBuffer
+  -interpolation_window_ TargetCommand[4]
+  -last_target_positions_ JointPositions
+  -active_trajectory_ JointTrajectorySegment
+  -configuration_ InterpolatorConfiguration
+  -pending_fault_reason_ atomic FaultReason
+  +submitCommand(command) CommandResult
+  +submitCommand(command,time) CommandResult
+  +updateTarget(time,positions) ControlResult
+  +state() InterpolatorState
+  +faultReason() FaultReason
+  +drainInputTelemetry(output) size_t
+  +drainControlTelemetry(output) size_t
+  -configureActiveTrajectory() FaultReason
+  -evaluateActiveTrajectory(time,output) ControlResult
+  -enterFaultedState(reason,output) ControlResult
+}
+
+CommandInterpolator *-- InterpolatorStateMachine
+CommandInterpolator ..> ShutdownCoordinator : coordinated by harness

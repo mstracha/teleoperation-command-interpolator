@@ -1,0 +1,40 @@
+sequenceDiagram
+  autonumber
+  participant C as Nominal 500 Hz controller
+  participant T as CommandInterpolator
+  participant S as State machine
+  participant Q as CommandRingBuffer
+  participant D as Derivative estimator
+  participant J as JointTrajectorySegment
+  participant CT as Control telemetry buffer
+
+  C->>T: updateTarget(controller_time, output)
+  T->>T: Check terminal or pending fault and clock monotonicity
+  T->>T: Evaluate receive watchdog
+  alt insufficient startup window
+    T->>CT: Record Buffering without target
+    T-->>C: Buffering
+  else active trajectory absent or complete
+    T->>Q: tryGetInterpolationSet(window of 4)
+    Q-->>T: immutable local copy
+    T->>D: estimate(window)
+    D-->>T: two six-joint boundary states
+    T->>J: configure(start, end, duration)
+    J->>J: Configure and continuously validate all 6 quintics
+    alt configuration or validation fails
+      T->>S: transitionTo(Faulted)
+      T->>CT: Record fault details without target
+      T-->>C: Faulted
+    else trajectory valid
+      T->>S: transitionTo(Running)
+      T->>J: evaluate(mapped segment time)
+      J-->>T: position, velocity, acceleration, jerk
+      T->>Q: tryAdvanceInterpolationSet() when successor exists
+      T->>CT: Record target and timing
+      T-->>C: TargetProduced
+    end
+  else active trajectory
+    T->>J: evaluate(mapped segment time)
+    T->>CT: Record target and timing
+    T-->>C: TargetProduced
+  end
