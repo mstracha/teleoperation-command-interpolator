@@ -4,8 +4,8 @@
 
 Author and maintainer: Mark Strachan<br>
 Version 1.0 - September 2026<br>
-Status: publication candidate; ten test executables passing at the verified source baseline<br>
-Verified source baseline: public `v1.0.0` release candidate, tested September 26, 2026
+Status: `v1.0.0` release; ten test executables passing at the verified source baseline<br>
+Verified source baseline: public `v1.0.0` release, tested September 27, 2026
 
 > **Safety boundary:** This is a software design and test artifact, not a certified robot controller. The included joint limits are fictional. No hardware plant, drive, emergency-stop circuit, safety PLC, fieldbus, operating-system real-time guarantee, or formal safety case has been validated.
 
@@ -341,8 +341,8 @@ At the verified source baseline, a clean CMake Release build produced ten test e
 
 | Verification field | Recorded value |
 |---|---|
-| Date | September 26, 2026 |
-| Source baseline | Public `v1.0.0` release candidate |
+| Date | September 27, 2026 |
+| Source baseline | Public `v1.0.0` release |
 | Compiler | Microsoft C/C++ 19.50.35720.0, x64 |
 | Visual Studio toolset | Visual Studio 2026 18.1; MSVC 14.50.35717 |
 | Windows SDK | 10.0.26100.0 |
